@@ -10,26 +10,43 @@ using System.Windows.Media;
 namespace TailBlazer.Views
 {
 
-    public class ScrollValues
+    public enum ScollProducer
     {
-        public int Rows { get;  }
-        public int FirstIndex { get;  }
+        Automatic,
+        User
+    }
 
-        public ScrollValues(int rows, int firstIndex)
+
+    public class ScrollInfoArgs
+    {
+        public int PageSize { get;  }
+
+        public int FirstRowIndex { get;  }
+
+        public IScrollInfo ScrollInfo { get; }
+
+        public ScollProducer Producer { get;  }
+
+
+        public ScrollInfoArgs(int pageSize, 
+                    int firstRowIndex, 
+                    IScrollInfo scrollInfo, 
+                    ScollProducer producer = ScollProducer.Automatic)
         {
-            Rows = rows;
-            FirstIndex = firstIndex;
+            PageSize = pageSize;
+            FirstRowIndex = firstRowIndex;
+            ScrollInfo = scrollInfo;
+            Producer = producer;
         }
     }
 
 
-    public interface IScrollReceiver
+    public interface IScrollController
     {
-        void RequestChange(ScrollValues values);
+        void ScrollInfoChanged(ScrollInfoArgs info);
     }
 
 
-    //TODO: Rewrite using a panel as the base
     public class VirtualScrollPanel : VirtualizingPanel, IScrollInfo
     {
         private const double ScrollLineAmount = 16.0;
@@ -55,13 +72,13 @@ namespace TailBlazer.Views
         public static readonly DependencyProperty StartIndexProperty =
             DependencyProperty.Register("StartIndex", typeof(int), typeof(VirtualScrollPanel), new PropertyMetadata(default(int), OnStartIndexChanged));
 
-        public static readonly DependencyProperty ScrollReceiverProperty = DependencyProperty.Register(
-            "ScrollReceiver", typeof (IScrollReceiver), typeof (VirtualScrollPanel), new PropertyMetadata(default(IScrollReceiver)));
+        public static readonly DependencyProperty ScrollControllerProperty = DependencyProperty.Register(
+            "ScrollController", typeof (IScrollController), typeof (VirtualScrollPanel), new PropertyMetadata(default(IScrollController)));
 
-        public IScrollReceiver ScrollReceiver
+        public IScrollController ScrollController
         {
-            get { return (IScrollReceiver) GetValue(ScrollReceiverProperty); }
-            set { SetValue(ScrollReceiverProperty, value); }
+            get { return (IScrollController) GetValue(ScrollControllerProperty); }
+            set { SetValue(ScrollControllerProperty, value); }
         }
 
         public int StartIndex
@@ -114,12 +131,9 @@ namespace TailBlazer.Views
          private static void OnStartIndexChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var panel = (VirtualScrollPanel)d;
+
+            panel.OnFirstIndexChanged(Convert.ToInt32(e.NewValue));
             panel.InvalidateMeasure();
-            panel.InvalidateScrollInfo();
-            // panel._firstIndex = panel.StartIndex;
-
-            //panel.InvokeStartIndexCommand(panel._firstIndex);
-
         }
 
         private static void OnRequireMeasure(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -144,10 +158,11 @@ namespace TailBlazer.Views
 
             // var items = (int)(sizeInfo.NewSize.Height / ItemHeight)+4;
             var items = (int)(sizeInfo.NewSize.Height / ItemHeight) ;
-           // InvalidateScrollInfo();
-            InvokeSizeCommand(items);
+            OnSizeChanged(items);
 
         }
+
+
 
         protected override Size MeasureOverride(Size availableSize)
         {
@@ -181,12 +196,8 @@ namespace TailBlazer.Views
                     bool newlyRealized;
 
                     var child = (UIElement)_itemsGenerator.GenerateNext(out newlyRealized);
-
                     if (child==null) continue;
-
-
                     children.Add(child);
-
                     SetVirtualItemIndex(child, itemIndex);
 
                     if (newlyRealized)
@@ -332,9 +343,7 @@ namespace TailBlazer.Views
                 LastRealizedItemIndex = lastRealizedIndex,
             };
         }
-
         
-
         private ExtentInfo GetVerticalExtentInfo(Size viewPortSize)
         {
             if (_itemsControl == null)
@@ -354,9 +363,7 @@ namespace TailBlazer.Views
             };
             return info;
         }
-
-
-
+        
         public void SetHorizontalOffset(double offset)
         {
             offset = Clamp(offset, 0, ExtentWidth - ViewportWidth);
@@ -410,15 +417,31 @@ namespace TailBlazer.Views
             if (firstIndex == _firstIndex) return;
 
             _firstIndex = firstIndex;
-         //   StartIndex = firstIndex;
-            ScrollReceiver?.RequestChange(new ScrollValues(_size, _firstIndex+1));
+         //   StartIndex = FirstRowIndex;
+           // ScrollController?.ScrollInfoChanged(new ScrollInfoArgs(_size, _firstIndex+1,this));
+            NotifyConsumerOfChange();
+        }
+
+        private void OnFirstIndexChanged(int firstIndex)
+        {
+            _firstIndex = firstIndex;
+            if (_firstIndex == firstIndex) return;
+            ScrollController?.ScrollInfoChanged(new ScrollInfoArgs(_size, _firstIndex, this));
+
         }
  
-        private void InvokeSizeCommand(int size)
+        private void OnSizeChanged(int size)
         {
+            if (_size == size) return;
             _size = size;
-            ScrollReceiver?.RequestChange(new ScrollValues(size, _firstIndex+1));
+            NotifyConsumerOfChange();
         }
+
+        private void NotifyConsumerOfChange()
+        {
+            ScrollController?.ScrollInfoChanged(new ScrollInfoArgs(_size, _firstIndex, this));
+        }
+
 
         public bool CanVerticallyScroll {get;set;}
         public bool CanHorizontallyScroll {get;set;}

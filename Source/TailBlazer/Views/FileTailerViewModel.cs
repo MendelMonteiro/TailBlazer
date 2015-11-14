@@ -13,11 +13,11 @@ using TailBlazer.Infrastucture;
 
 namespace TailBlazer.Views
 {
-    public class FileTailerViewModel: AbstractNotifyPropertyChanged, IDisposable, IScrollReceiver
+    public class FileTailerViewModel: AbstractNotifyPropertyChanged, IDisposable, IScrollController
     {
         private readonly IDisposable _cleanUp;
         private readonly ReadOnlyObservableCollection<LineProxy> _data;
-        private readonly ISubject<ScrollValues> _userScrollRequested = new Subject<ScrollValues>();
+       // private readonly ISubject<ScrollInfo> _userScrollRequested = new Subject<ScrollInfo>();
 
         public string File { get; }
         public ReadOnlyObservableCollection<LineProxy> Lines => _data;
@@ -26,8 +26,10 @@ namespace TailBlazer.Views
         private string _searchText;
         private bool _autoTail;
         private string _lineCountText;
-        private int _firstRow;
+        private int _firstLine;
         private int _matchedLineCount;
+        private int _pageSize;
+        private ScrollInfoArgs _scrollInfoArgs;
 
         public FileTailerViewModel(ILogger logger,ISchedulerProvider schedulerProvider, FileInfo fileInfo)
         {
@@ -39,14 +41,29 @@ namespace TailBlazer.Views
             AutoTail = true;
             
             var filterRequest = this.WhenValueChanged(vm => vm.SearchText).Throttle(TimeSpan.FromMilliseconds(125));
-            var autotail = this.WhenValueChanged(vm => vm.AutoTail)
-                            .CombineLatest(_userScrollRequested, (auto, user) =>
-                            {
-                                return auto ? new ScrollRequest(user.Rows) 
-                                : new ScrollRequest(user.Rows, user.FirstIndex+1);
-                            }).DistinctUntilChanged();
 
-            var tailer = new FileTailer(fileInfo, filterRequest, autotail);
+            var autoChanged = this.WhenValueChanged(vm => vm.AutoTail);
+            var firstLineChanged = this.WhenValueChanged(vm => vm.FirstLine);
+            var pageSizeChanged = this.WhenValueChanged(vm => vm.PageSize);
+
+            var scroller = autoChanged.CombineLatest(firstLineChanged, pageSizeChanged, 
+                        (auto, first, pageSize) => new  { auto, first, pageSize})
+                    .Select(args =>
+                    {
+                        return args.auto 
+                                    ? new ScrollRequest(args.pageSize) 
+                                    : new ScrollRequest(args.pageSize, args.first);
+                    })
+                    .DistinctUntilChanged();
+
+            //var autotail = this.WhenValueChanged(vm => vm.AutoTail)
+            //                .CombineLatest(_userScrollRequested, (auto, user) =>
+            //                {
+            //                    return auto ? new ScrollRequest(user.Rows) 
+            //                    : new ScrollRequest(user.Rows, user.FirstIndex+1);
+            //                }).DistinctUntilChanged();
+
+            var tailer = new FileTailer(fileInfo, filterRequest, scroller);
 
 
             //create user display for count line count
@@ -71,34 +88,40 @@ namespace TailBlazer.Views
 
 
             //monitor matching lines and start index 
-            //update local values so the virtual scroll panel can bind to them
-            var matchedLinesMonitor = tailer.MatchedLines
-                .Subscribe(matched => MatchedLineCount = matched);
+            //update local info so the virtual scroll panel can bind to them
+            var matchedLinesMonitor = tailer.MatchedLines.Subscribe(matched => MatchedLineCount = matched);
 
             var firstIndexMonitor = tailer.Lines.Connect()
                 .QueryWhenChanged(lines =>
                 {
                     //use zero based index rather than line number
-                    return lines.Count == 0 ? 0 : lines.Select(l => l.Number).Min() -1 ;
-                }).Subscribe(first=> FirstRow= first-1);
+                    return lines.Count == 0 ? 0 : lines.Select(l => l.Number).Min();
+                }).Subscribe(first => FirstLine = first - 1);
 
 
             _cleanUp = new CompositeDisposable(tailer, 
                 lineCounter, 
                 loader,
-                firstIndexMonitor,
-                matchedLinesMonitor,
-                Disposable.Create(() =>
-                {
-                    _userScrollRequested.OnCompleted();
-                }));
+                matchedLinesMonitor);
 
         }
 
-        void IScrollReceiver.RequestChange(ScrollValues values)
+        void IScrollController.ScrollInfoChanged(ScrollInfoArgs info)
         {
-            if (values == null) throw new ArgumentNullException(nameof(values));
-            _userScrollRequested.OnNext(values);
+            if (info == null) throw new ArgumentNullException(nameof(info));
+
+            _scrollInfoArgs = info;
+            //index zero based for scroller
+            FirstLine = info.FirstRowIndex +1 ;
+            PageSize = info.PageSize;
+
+            if ((info.ScrollInfo.VerticalOffset < _scrollInfoArgs.ScrollInfo.VerticalOffset) &&
+                info.Producer == ScollProducer.User)
+                AutoTail = false;
+
+
+
+            //  _userScrollRequested.OnNext(info);
         }
 
         public bool AutoTail
@@ -107,11 +130,19 @@ namespace TailBlazer.Views
             set { SetAndRaise(ref _autoTail, value); }
         }
 
-        public int FirstRow
+        public int FirstLine
         {
-            get { return _firstRow; }
-            set { SetAndRaise(ref _firstRow, value); }
+            get { return _firstLine; }
+            set { SetAndRaise(ref _firstLine, value); }
         }
+
+        private int PageSize
+        {
+            get { return _pageSize; }
+            set { SetAndRaise(ref _pageSize, value); }
+        }
+
+
 
         public int MatchedLineCount
         {
