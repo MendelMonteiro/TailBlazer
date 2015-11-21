@@ -37,17 +37,21 @@
   <PropertyGroup>
     <StartupObject>TailBlazer.Infrastucture.BootStrap</StartupObject>
   </PropertyGroup>
+  <PropertyGroup>
+    <ApplicationIcon>
+    </ApplicationIcon>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="Dragablz, Version=0.0.2.134, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\Dragablz.0.0.2.134\lib\net45\Dragablz.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="DynamicData, Version=4.3.0.1086, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\DynamicData.4.3.0.1086-Beta\lib\net45\DynamicData.dll</HintPath>
+    <Reference Include="DynamicData, Version=4.3.1.1090, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\DynamicData.4.3.1.1090\lib\net45\DynamicData.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="DynamicData.Plinq, Version=4.3.0.1086, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\DynamicData.4.3.0.1086-Beta\lib\net45\DynamicData.Plinq.dll</HintPath>
+    <Reference Include="DynamicData.Plinq, Version=4.3.1.1090, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\DynamicData.4.3.1.1090\lib\net45\DynamicData.Plinq.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="log4net, Version=1.2.13.0, Culture=neutral, PublicKeyToken=669e0ddf0bb1aa2a, processorArchitecture=MSIL">
@@ -118,7 +122,6 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
-    <Compile Include="Infrastucture\AutoScroller.cs" />
     <Compile Include="Views\FileDropContainer.cs" />
     <Compile Include="Views\FileDropMonitor.cs" />
     <Compile Include="Views\FileIcon.cs" />
@@ -132,7 +135,9 @@
     <Compile Include="Views\FileTailerViewModelFactory.cs" />
     <Compile Include="Views\IScrollReceiver.cs" />
     <Compile Include="Views\LineProxy.cs" />
-    <Compile Include="Views\ScrollValues.cs" />
+    <Compile Include="Views\ScrollChangedArgs.cs" />
+    <Compile Include="Views\ScrollDirection.cs" />
+    <Compile Include="Views\ScrollBoundsArgs.cs" />
     <Compile Include="Views\VirtualScrollPanel.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>

@@ -1,9 +1,13 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using DynamicData;
+using DynamicData.Kernel;
+using TailBlazer.Domain.Infrastructure;
 
 namespace TailBlazer.Domain.FileHandling
 {
@@ -12,85 +16,131 @@ namespace TailBlazer.Domain.FileHandling
         private readonly IDisposable _cleanUp;
         public IObservable<int> TotalLines { get;  }
         public IObservable<int> MatchedLines { get; }
+        public IObservable<long> FileSize { get; }
+
         public IObservableList<Line> Lines { get; }
 
         public FileTailer(FileInfo file, 
             IObservable<string> textToMatch,
-            IObservable<ScrollRequest> scrollRequest)
+            IObservable<ScrollRequest> scrollRequest,
+            IScheduler scheduler=null)
         {
             if (file == null) throw new ArgumentNullException(nameof(file));
             if (textToMatch == null) throw new ArgumentNullException(nameof(textToMatch));
             
-            //create list of lines which contain the observable text
-           var matchedLines = textToMatch
-                    .Select(searchText =>
-                    {
-                        Func<string, bool> predicate = null;
-                        if (!string.IsNullOrEmpty(searchText))
-                            predicate = s => s.Contains(searchText, StringComparison.OrdinalIgnoreCase);
-
-                        return file.WatchFile().ScanFile(predicate);
-                    }).Switch()
-                    .Replay(1).RefCount();
-
-            MatchedLines = matchedLines.Select(x => x.MatchingLines.Length);
-
-            TotalLines = matchedLines.Select(x => x.TotalLines);
-
-            //todo: plug in file missing or error into the screen
-            
             var lines = new SourceList<Line>();
             Lines = lines.AsObservableList();
             
-            //this is the beast! Dynamically combine lines requested by the consumer 
-            //with the lines which exist in the file. This enables proper virtualisation of the file 
-            var scroller = matchedLines
-                .CombineLatest(scrollRequest, (scanResult, request) => new {scanResult , request })
-                .Subscribe(x =>
+            var locker = new object();
+            scrollRequest = scrollRequest.Synchronize(locker);
+
+            var metronome = Observable
+                    .Interval(TimeSpan.FromMilliseconds(250), scheduler ?? Scheduler.Default)
+                    .ToUnit()
+                    .Replay().RefCount();
+
+            //temp mess for a few days
+            var indexer = file.WatchFile(metronome)
+                            .TakeWhile(notification => notification.Exists)
+                            .Repeat()
+                            .Index()
+                            .Synchronize(locker)
+                            .Replay(1).RefCount();
+
+            var matcher = textToMatch.Select(searchText =>
+            {
+                if (string.IsNullOrEmpty(searchText) || searchText.Length < 3)
+                    return Observable.Return(LineMatches.None);
+
+                return file.WatchFile(metronome)
+                    .TakeWhile(notification => notification.Exists)
+                    .Repeat()
+                    .Match(s => s.Contains(searchText, StringComparison.OrdinalIgnoreCase));
+
+            }).Switch()
+            .Synchronize(locker)
+            .Replay(1).RefCount();
+
+
+            //count matching lines (all if no filter is specified)
+            MatchedLines = indexer.CombineLatest(matcher, (indicies, matches) => matches == LineMatches.None ? indicies.Count : matches.Count);
+
+            //count total line
+            TotalLines = indexer.Select(x => x.Count);
+
+            FileSize = file.WatchFile(metronome).Select(notification => notification.Size);
+
+
+
+            var aggregator = indexer.CombineLatest(matcher, scrollRequest,(idx, mtch, scroll) => new CombinedResult(scroll, mtch, idx))
+                .Select(result =>
                 {
-                    var mode = x.request.Mode;
-                    var pageSize = x.request.PageSize;
+                    var scroll = result.Scroll;
+                    var allLines = result.Incidies;
+                    var matched = result.MatchedLines;
 
-                    var endOfTail = x.scanResult.EndOfTail;
-                    var isInitial = x.scanResult.Index==0;
-                    var allLines = x.scanResult.MatchingLines;
-
-
-                    var previousPage = lines.Items.Select(l => new LineIndex(l.Number, l.Index)).ToArray();
-                    
-                    //If tailing, take the end only. 
-                    //Otherwise take the page size and start index from the request
-                    var currentPage = (mode == ScrollingMode.Tail
-                        ? allLines.Skip(allLines.Length-pageSize).Take(pageSize).ToArray()
-                        : allLines.Skip(Math.Min(x.request.FirstIndex-1, allLines.Length- pageSize)).Take(pageSize)).ToArray();
-                    
-                    var added = currentPage.Except(previousPage).ToArray();
-                    var removed = previousPage.Except(currentPage).Select(li=>li.Line).ToArray();
-
-                    if (added.Length + removed.Length == 0) return;
-
-                    //TODO: Readline can throw an error, so need to hand this scenario
-
-
-                    //read new lines from the file [TODO, need actual index in relative result set]
-                    // var addedLines = file.ReadLines(added,i=> !isInitial && i > endOfTail).ToArray();
-                    var addedLines = file.ReadLines(added, (lineIndex, text) =>
+                    IEnumerable<LineIndex> indices;
+                    if (result.MatchedLines.ChangedReason == LineMatchChangedReason.None)
                     {
-                        var isEndOfTail = !isInitial && lineIndex.Line > endOfTail;
-                        return new Line(lineIndex.Line, lineIndex.Index, text, isEndOfTail ? DateTime.Now : (DateTime?)null);
+                        indices = scroll.Mode == ScrollingMode.Tail
+                            ? allLines.GetTail(scroll)
+                            : allLines.GetFromIndex(scroll);
+                    }
+                    else
+                    {
+                        indices = scroll.Mode == ScrollingMode.Tail
+                            ? allLines.GetTail(scroll, matched)
+                            : allLines.GetFromIndex(scroll, matched);
+                    }
+
+                    var currentPage = indices.ToArray();
+                    var previous = lines.Items.Select(l => l.LineIndex).ToArray();
+                    var removed = previous.Except(currentPage).ToArray();
+                    var removedLines = lines.Items.Where(l=> removed.Contains(l.LineIndex)).ToArray();
+
+                    var added = currentPage.Except(previous).ToArray();
+                    //finally we can load the line from the file
+                    var newLines =  file.ReadLines(added, (lineIndex, text) =>
+                    {
+                        var isEndOfTail = allLines.ChangedReason != LinesChangedReason.Loaded && lineIndex.Line > allLines.TailStartsAt;
+
+                        return new Line(lineIndex, text, isEndOfTail ? DateTime.Now : (DateTime?) null);
                     }).ToArray();
 
-                    //get old lines from the current collection
-                    var removedLines = lines.Items.Where(l=> removed.Contains(l.Number)).ToArray();
 
-                    //finally relect changes in the list
+
+                    return new { NewLines = newLines, OldLines = removedLines };
+                })
+                .RetryWithBackOff((Exception error, int attempts) =>
+                {
+                    //todo: plug in file missing or error into the screen
+                    return TimeSpan.FromSeconds(1);
+                 })
+                 .Where(fn=> fn.NewLines.Length + fn.OldLines.Length > 0)
+                .Subscribe(changes =>
+                {
+                    //update observable list
                     lines.Edit(innerList =>
                     {
-                        innerList.RemoveMany(removedLines);
-                        innerList.AddRange(addedLines);
+                        if (changes.OldLines.Any()) innerList.RemoveMany(changes.OldLines);
+                        if (changes.NewLines.Any())  innerList.AddRange(changes.NewLines);
                     });
                 });
-            _cleanUp = new CompositeDisposable(Lines, scroller, lines);
+            _cleanUp = new CompositeDisposable(Lines, lines, aggregator);
+        }
+
+        private class CombinedResult
+        {
+            public ScrollRequest Scroll { get;  }
+            public LineMatches MatchedLines { get;  }
+            public LineIndicies Incidies { get;  }
+
+            public CombinedResult(ScrollRequest scroll, LineMatches matchedLines, LineIndicies incidies)
+            {
+                Scroll = scroll;
+                MatchedLines = matchedLines;
+                Incidies = incidies;
+            }
         }
 
         public void Dispose()

@@ -2,6 +2,7 @@
 {
     public interface IScrollReceiver
     {
-        void ScrollTo(ScrollValues values);
+        void ScrollBoundsChanged(ScrollBoundsArgs boundsArgs);
+        void ScrollChanged(ScrollChangedArgs scrollChangedArgs);
     }
 }

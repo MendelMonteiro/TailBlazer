@@ -4,21 +4,10 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Input;
 using System.Windows.Media;
 
 namespace TailBlazer.Views
 {
-
-
-    public enum ScrollChangeReason
-    {
-        Automatic,
-        User
-    }
-
-
-    //TODO: Rewrite using a panel as the base
     public class VirtualScrollPanel : VirtualizingPanel, IScrollInfo
     {
         private const double ScrollLineAmount = 16.0;
@@ -46,15 +35,6 @@ namespace TailBlazer.Views
 
         public static readonly DependencyProperty ScrollReceiverProperty = DependencyProperty.Register(
             "ScrollReceiver", typeof (IScrollReceiver), typeof (VirtualScrollPanel), new PropertyMetadata(default(IScrollReceiver)));
-
-        public static readonly DependencyProperty AutoScrollProperty = DependencyProperty.Register(
-            "AutoScroll", typeof (bool), typeof (VirtualScrollPanel), new PropertyMetadata(default(bool)));
-
-        public bool AutoScroll
-        {
-            get { return (bool) GetValue(AutoScrollProperty); }
-            set { SetValue(AutoScrollProperty, value); }
-        }
 
         public IScrollReceiver ScrollReceiver
         {
@@ -95,9 +75,7 @@ namespace TailBlazer.Views
         public VirtualScrollPanel()
         {
             if (!DesignerProperties.GetIsInDesignMode(this))
-            {
                 Dispatcher.BeginInvoke(new Action(Initialize));
-            }
         }
 
         private void Initialize()
@@ -112,8 +90,6 @@ namespace TailBlazer.Views
          private static void OnStartIndexChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             var panel = (VirtualScrollPanel)d;
-            //panel._firstIndex = Convert.ToInt32(e.NewValue);
-
             panel. CallbackStartIndexChanged(Convert.ToInt32(e.NewValue));
             panel.InvalidateMeasure();
         }
@@ -212,6 +188,8 @@ namespace TailBlazer.Views
                 //part 2: do the measure
                 foreach (var child in children)
                 {
+
+
                     _itemsGenerator.PrepareItemContainer(child);
                     child.Measure(new Size(double.PositiveInfinity, ItemHeight));
                     widestWidth= Math.Max(widestWidth, child.DesiredSize.Width);
@@ -223,7 +201,6 @@ namespace TailBlazer.Views
                     _childLayouts.Add(child, new Rect(currentX, currentY, Math.Max(widestWidth,_viewportSize.Width), ItemHeight));
                     currentY += ItemHeight;
                 }
-
             }
             RemoveRedundantChildren();
             UpdateScrollInfo(availableSize, _extentInfo, widestWidth);
@@ -251,7 +228,6 @@ namespace TailBlazer.Views
                         _itemsGenerator.Recycle(generatorPosition, 1);
                     }
                 }
-
                 SetVirtualItemIndex(child, -1);
             }
         }
@@ -306,7 +282,6 @@ namespace TailBlazer.Views
             // so that keyboard navigation works properly. For example, when focus is on the first visible item, and the user
             // navigates up, the ListBox selects the previous item, and the scrolls that into view - and this triggers the loading of the rest of the items 
             // in that row
-
             var firstVisibleLine = (int)Math.Floor(_offset.Y / itemHeight);
             var firstRealizedIndex = Math.Max(firstVisibleLine - 1, 0);
             var firstRealizedItemLeft = firstRealizedIndex  * ItemWidth - HorizontalOffset;
@@ -321,12 +296,10 @@ namespace TailBlazer.Views
                 FirstRealizedItemIndex = firstRealizedIndex,
                 FirstRealizedItemLeft = firstRealizedItemLeft,
                 FirstRealizedLineTop = firstRealizedItemTop,
-                LastRealizedItemIndex = lastRealizedIndex,
+                LastRealizedItemIndex = lastRealizedIndex
             };
         }
-
         
-
         private ExtentInfo GetVerticalExtentInfo(Size viewPortSize)
         {
             if (_itemsControl == null)
@@ -336,13 +309,13 @@ namespace TailBlazer.Views
             var maxVerticalOffset = extentHeight;// extentHeight - viewPortSize.Height;
             var verticalOffset = (StartIndex /(double) TotalItems)*maxVerticalOffset;
 
-            var info = new ExtentInfo()
+            var info = new ExtentInfo
             {
                 VirtualCount = _itemsControl.Items.Count,
                 TotalCount = TotalItems,
                 Height = extentHeight,
                 VerticalOffset = verticalOffset,
-                MaxVerticalOffset = maxVerticalOffset,
+                MaxVerticalOffset = maxVerticalOffset
             };
             return info;
         }
@@ -369,9 +342,7 @@ namespace TailBlazer.Views
 
         public void SetVerticalOffset(double offset)
         {
-
             if (double.IsInfinity(offset)) return;
-
             var diff = (int)((offset - _extentInfo.VerticalOffset) / ItemHeight);
             InvokeStartIndexCommand(diff);
         }
@@ -403,20 +374,26 @@ namespace TailBlazer.Views
 
             if (_firstIndex == firstIndex) return;
             _firstIndex = firstIndex;
-            ReportChanges();
 
+            OnOffsetChanged(lines > 0 ? ScrollDirection.Down : ScrollDirection.Up, lines);
+            ReportChanges();
         }
 
-        private void ReportChanges(ScrollChangeReason reason = ScrollChangeReason.Automatic)
+        private void ReportChanges()
         {
-            ScrollReceiver?.ScrollTo(new ScrollValues(_size, _firstIndex,this, reason));
+            ScrollReceiver?.ScrollBoundsChanged(new ScrollBoundsArgs(_size, _firstIndex));
+        }
+
+        private void OnOffsetChanged(ScrollDirection direction,int firstRow)
+        {
+            ScrollReceiver?.ScrollChanged(new ScrollChangedArgs(direction, firstRow));
         }
 
         private void CallbackStartIndexChanged(int index)
         {
             if (_firstIndex == index) return;
             _firstIndex = index;
-            ReportChanges();
+           ReportChanges();
         }
  
         private void InvokeSizeCommand(int size)
@@ -478,7 +455,6 @@ namespace TailBlazer.Views
 
         public void MouseWheelUp()
         {
-            AutoScroll = false;
             InvokeStartIndexCommand(-SystemParameters.WheelScrollLines);
         }
 

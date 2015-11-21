@@ -6,20 +6,14 @@ namespace TailBlazer.Domain.FileHandling
     public class FileNotification : IEquatable<FileNotification>
     {
         private FileInfo Info { get; }
-
         public bool Exists { get; }
-
         public long Size { get; }
-
         public string FullName => Info.FullName;
-
         public string Name => Info.Name;
-
         public string Folder => Info.DirectoryName;
-
         public FileNotificationType NotificationType { get; }
-
         public Exception Error { get; }
+
 
         public FileNotification(FileInfo fileInfo)
         {
@@ -61,10 +55,16 @@ namespace TailBlazer.Domain.FileHandling
                 {
                     NotificationType = FileNotificationType.Created;
                 }
-                else if (Size != previous.Size)
+                else if (Size > previous.Size)
                 {
                     NotificationType = FileNotificationType.Changed;
                 }
+                else if (Size < previous.Size)
+                {
+                    //File has shrunk. We need it's own notification
+                    NotificationType = FileNotificationType.Created;
+                }
+
                 else
                 {
                     NotificationType = FileNotificationType.None;
@@ -78,6 +78,11 @@ namespace TailBlazer.Domain.FileHandling
         }
 
         #region Equality
+
+        public static explicit operator FileInfo(FileNotification source)
+        {
+            return source.Info;
+        }
 
         public bool Equals(FileNotification other)
         {

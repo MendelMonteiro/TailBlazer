@@ -10,20 +10,6 @@ namespace System
     public static class Extensions
     {
 
-        public class ItemWithPrevious<T>
-        {
-            public T Previous;
-            public T Current;
-        }
-        public static IObservable<ItemWithPrevious<T>> WithPrevious<T>(this IObservable<T> source)
-        {
-            var previous = default(T);
-
-            return source
-                .Select(t => new ItemWithPrevious<T> { Previous = previous, Current = t })
-                .Do(items => previous = items.Current);
-        }
-
         public static bool Contains(this string source, string toCheck, StringComparison comp)
         {
             return source.IndexOf(toCheck, comp) >= 0;
@@ -35,10 +21,25 @@ namespace System
             return source.NextDouble() > 0.5;
         }
 
+        public static string FormatWithAbbreviation(this long source)
+        {
+            //TODO: not very efficient. Come back to this later
+            //var powereof = Math.Floor(Math.Log10(source));
+            string[] sizes = { "B", "KB", "MB", "GB" };
+            double len = source;
+            int order = 0;
+            while (len >= 1024 && order + 1 < sizes.Length)
+            {
+                order++;
+                len = len / 1024;
+            }
+            return $"{len:0.##} {sizes[order]}";
+        }
+
         public static string Pluralise(this string source, int count)
         {
             if (count == 1) return $"{count} {source}";
-            return $"{count} {source}s"; ;
+            return $"{count} {source}s";
         }
     }
 }
@@ -48,6 +49,8 @@ namespace System.Collections.Generic
 
     public static class Extensions
     {
+
+
 
         public static void ForEach<T>(this IEnumerable<T> source, Action<T> action)
         {
